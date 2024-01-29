@@ -1,0 +1,121 @@
+---
+title: "NYC Schools Perceptions"
+author: "Gavin Shin"
+date: "2023-10-26"
+output: html_document
+---
+
+In this project, we will answer to the following questions.
+
+1. Do student, teacher, and parent perceptions of NYC school quality appear to be related to demographic and academic success metrics?
+
+2. Do students, teachers, and parents have similar perceptions of NYC school quality?
+
+
+Load the required packages for this analysis
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(purrr)
+library(tidyr)
+library(stringr)
+```
+
+Import data into R
+
+```{r}
+survey1<-read_tsv("masterfile11_gened_final.txt")
+survey2<-read_tsv("masterfile11_d75_final.txt")
+combined <- read_csv("combined.csv")
+```
+
+Brief look of Data
+
+```{r}
+head(survey1,5)
+head(survey2,5)
+head(combined,5)
+```
+Include necessary columns for the analysis and combine those two 
+```{r}
+survey1_new <- survey1 %>%
+                  filter(schooltype == "High School") %>%
+                  select(dbn:aca_tot_11)
+surevy2_new <- survey2 %>%
+                  select(dbn:aca_tot_11)
+combined_survey <- survey1_new %>%
+                      bind_rows(surevy2_new)
+
+```
+Join combined_survey and combined dataframes
+Use left join to keep all information from combined dataframe and corresponding information from survey
+```{r}
+combined_survey <- combined_survey %>%
+                        rename(DBN = dbn)
+
+combined_join <- combined %>%
+                        left_join(combined_survey, by = "DBN")
+```
+
+Look for interesting relationships between variables "avg_sat_score" and convert it to tibble for efficient analysis
+```{r}
+cor_mat <- combined_join %>%
+              select(avg_sat_score, saf_p_11:aca_tot_11) %>%
+              cor(use = "pairwise.complete.obs")
+cor_tib <- cor_mat %>%
+              as_tibble(rownames = "variables")
+```
+Filter correlation to find strong relationship greater 0.3 or less than 0.3
+
+```{r}
+strong_cor <- cor_tib %>%
+              select(variables, avg_sat_score) %>%
+              filter(avg_sat_score > 0.25 | avg_sat_score < -0.25)
+```
+
+Make a function of scatter plot to look at the relationship visually.
+```{r}
+graph <- function(x,y){
+  ggplot(combined_join, aes_string(x = x, y= y))+
+    geom_point()
+}
+
+x = strong_cor$variables[2:5]
+y = "avg_sat_score"
+
+map2(x,y,graph)
+
+```
+All of those variables show a week positive relationship with the variable avg_sat_score
+
+Reshape the data to see if there is a different outcome based on who answers the survey (parents, students, teacher)
+```{r}
+reshape_combined_join <- combined_join %>%
+                            pivot_longer(cols = saf_p_11:aca_tot_11,
+                                         names_to = "survey_questions",
+                                         values_to = "score")
+```
+Create new variables response_type and metric
+```{r}
+reshape_combined_join <- reshape_combined_join %>%
+                            mutate(response_type = str_sub(survey_questions, 5,6)) %>%
+                            mutate(metric = str_sub(survey_questions, 1,3))
+
+reshape_combined_join <- reshape_combined_join %>%
+                            mutate(response_type = 
+                                    ifelse(response_type == "p_","parent",
+                                      ifelse(response_type == "s_","student",
+                                        ifelse(response_type == "t_", "teacher",
+                                          ifelse(response_type == "to","total", "NA")))))
+```
+
+Creating graphs based on reponse_type
+```{r}
+reshape_combined_join %>%
+  filter(response_type != "total")%>%
+  ggplot(aes(x = metric, y = score, fill = response_type)) + 
+  geom_boxplot()
+```
+
+There are difference to some extent based on the type of questions, but generally speaking, parents' responses are the highest and teacher and students responses are following respectively.

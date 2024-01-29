@@ -1,0 +1,155 @@
+---
+title: "Answering Business Questions using SQL_SQL in R"
+author: "Gavin Shin"
+date: "2023-12-04"
+output: html_document
+---
+
+## Create helper functions
+```{r}
+library(RSQLite)
+library(DBI)
+
+db<- 'chinook.db'
+
+run_query = function(a,db){
+  conn = dbConnect(SQLite(),db)
+  result = dbGetQuery(conn,a)
+  dbDisconnect(conn)
+  return(result)
+}
+show_tables = function(db){
+  a = "SELECT name, type
+       FROM sqlite_master
+       WHERE type IN ('table','view')"
+  return(run_query(a,db))
+}
+
+show_tables(db)
+
+```
+
+## Find the most selling genre to choose new albums to purchase
+```{r}
+
+newAlbums = '
+WITH usa_sold AS 
+  (
+    SELECT il.* 
+      FROM invoice_line il
+INNER JOIN invoice i ON i.invoice_id = il.invoice_id
+INNER JOIN customer c ON c.customer_id = i.customer_id
+     WHERE c.country = "USA"
+  )
+
+SELECT g.name,
+      COUNT(*) as number, 
+      CAST(COUNT(g.name) AS FLOAT) / (SELECT COUNT(*) FROM usa_sold) as percentages
+  FROM usa_sold us
+INNER JOIN track t ON t.track_id = us.track_id
+INNER JOIN genre g ON g.genre_id = t.genre_id
+GROUP BY g.name
+ORDER BY number DESC;
+LIMIT 10;
+'
+
+run_query(newAlbums,db)
+```
+### Create a plot 
+```{r}
+library(ggplot2)
+data <- run_query(newAlbums,db)
+
+ggplot(data, aes(x = reorder(name, -number),y = number))+
+  geom_bar(stat = "identity")+
+  xlab("Genre") + ylab("Number Sold")
+
+```
+
+Based on the graph and the table, among the list of 4 different genre albums(Hip-Hop, Punk, Pop, Blues), Punk, Blues, and Pop should be selected for better sales.
+
+## Analyze employee sales performance
+```{r}
+total_sales = '
+  WITH total_sales AS
+  (
+  SELECT SUM(total) total, c.support_rep_id 
+  FROM invoice i
+  INNER JOIN customer c ON i.customer_id = c.customer_id
+  GROUP BY i.customer_id
+  )
+  
+SELECT e.first_name || " " || e.last_name name, SUM(t.total) total_sales, e.employee_id, e.title
+FROM employee e
+INNER JOIN total_sales t ON t.support_rep_id = e.employee_id
+GROUP BY employee_id
+ORDER BY total_sales DESC
+'
+
+run_query(total_sales,db)
+```
+### Create a visualization 
+```{r}
+data1 = run_query(total_sales,db)
+ggplot(data1, aes(x = name,y = total_sales))+
+  geom_bar(stat = "identity")
+```
+
+There are three sales support agent, Jane Peacock shows the highest sales among those.
+
+## Analyze Sales by Country
+
+```{r}
+salesPerCountry = '
+WITH new_country AS 
+(
+  SELECT customer_id,
+       CASE
+           WHEN (
+                 SELECT count(*)
+                 FROM customer
+                 where country = c.country
+                ) = 1 THEN "Other"
+           ELSE c.country
+       END AS country
+     FROM customer c
+)
+
+SELECT 
+       nc.country country,
+       Count(distinct nc.customer_id) customers,
+       SUM(i.total) total_sales,
+       SUM(i.total)/ Count(distinct nc.customer_id) average_order,
+       SUM(i.total)/ Count(distinct i.invoice_id) customer_lifetime_sales,
+       CASE
+            WHEN country = "Other" THEN 1
+            ELSE 0
+       END AS arrange
+FROM invoice i
+INNER JOIN new_country nc ON nc.customer_id = i.customer_id
+GROUP BY nc.country
+ORDER BY arrange ASC, total_sales DESC;
+'
+run_query(salesPerCountry,db)
+
+```
+
+## Visualize Sales by Country
+```{r}
+table <- run_query(salesPerCountry,db)
+
+ggplot(table, aes(x = reorder(country, -total_sales), y =  total_sales)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Total Sales by Country",
+       x = "Country",
+       y = "Sales")+
+   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(table, aes(x = reorder(country, -average_order), y =  average_order)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Average Sales by Country",
+       x = "Country",
+       y = "Sales")+
+   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
